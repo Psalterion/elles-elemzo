@@ -6,10 +6,9 @@ import warnings
 
 # --- ALAP BEÁLLÍTÁSOK ---
 warnings.filterwarnings("ignore")
-st.set_page_config(page_title="Telepi Elemző Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Nagy Dűr Farrowing Analyzer", layout="wide", initial_sidebar_state="expanded")
 
 # --- STÍLUS (CSS) ---
-# Kicsit csinosítunk a gombokon és a metriák elrendezésén
 st.markdown("""
 <style>
     .stDownloadButton > button {
@@ -29,7 +28,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🐖 Telepi Reprodukciós Műszerfal")
+st.title("🐖 Nagy Dűr Farrowing Analyzer")
 st.markdown("---")
 
 # --- FÜGGVÉNYEK ---
@@ -50,6 +49,7 @@ def load_data(file):
 
         df.columns = [str(c).strip() for c in df.columns]
 
+        # Dátum keresés
         date_col = next((c for c in df.columns if 'date' in c.lower() or 'dátum' in c.lower()), None)
         if date_col:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
@@ -59,6 +59,7 @@ def load_data(file):
             if week_col:
                 df['Week'] = df[week_col]
 
+        # Szótár
         mapping = {
             'Sow name': ['Sow name', 'Koca', 'Anya', 'Sow'],
             'Parity': ['Parity', 'Fialás', 'Ellés', 'Sorszám'],
@@ -84,7 +85,6 @@ def load_data(file):
         return None
 
 def download_chart(fig, filename):
-    """Grafikon konvertálása letölthető formátumba"""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches='tight', dpi=150)
     buf.seek(0)
@@ -94,7 +94,7 @@ def download_chart(fig, filename):
 def force_text_on_bars(ax, bars, is_percent=False, color='black'):
     for bar in bars:
         height = bar.get_height()
-        if height > 0:
+        if height > 0.05: # Csak ha látható mennyiség
             label = f"{height:.1f}%" if is_percent else f"{height:.1f}"
             ax.text(bar.get_x() + bar.get_width()/2., height,
                     label,
@@ -109,7 +109,7 @@ def force_text_with_counts(ax, x_data, y_data, counts, color, position='top'):
             ax.annotate(label, (x, y), textcoords="offset points", xytext=xytext, ha='center', va=va, color=color, fontweight='bold', fontsize=9, bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=0.2))
 
 # --- FŐ PROGRAM ---
-uploaded_files = st.sidebar.file_uploader("📂 Fájlok feltöltése", accept_multiple_files=True)
+uploaded_files = st.sidebar.file_uploader("📂 Upload Files", accept_multiple_files=True)
 
 if uploaded_files:
     dfs = []
@@ -141,30 +141,38 @@ if uploaded_files:
 
             unique_weeks = df_clean['Week'].nunique()
             
-            # --- KPI SÁV (A lényeg egy pillantásra) ---
-            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            # --- KPI SÁV (ÚJ: Koca/Süldő bontás) ---
+            # 5 oszlopot hozunk létre
+            kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+            
+            # Koca/Süldő adatok kiszámolása
+            sows_data = df_clean[~df_clean['Is_Gilt']]
+            gilts_data = df_clean[df_clean['Is_Gilt']]
+            
+            avg_live_sow = sows_data['Liveborn'].mean() if not sows_data.empty else 0
+            avg_live_gilt = gilts_data['Liveborn'].mean() if not gilts_data.empty else 0
             
             with kpi1:
-                st.metric("Összes Fialás", f"{len(df_clean)} db", delta_color="off")
+                st.metric("Total Farrowings", f"{len(df_clean)}", delta_color="off")
             with kpi2:
-                avg_live = df_clean['Liveborn'].mean()
-                st.metric("Átlag Élveszületés", f"{avg_live:.2f}", border=True)
+                st.metric("Sow Avg Live", f"{avg_live_sow:.2f}", border=True)
             with kpi3:
-                # Stillborn arány
-                sb_rate = df_clean['Stillborn'].sum() / df_clean['Totalborn'].sum() * 100
-                st.metric("Átlag Halvaszületés", f"{sb_rate:.1f}%", border=True)
+                st.metric("Gilt Avg Live", f"{avg_live_gilt:.2f}", border=True)
             with kpi4:
-                st.metric("Összes Malac (Élve)", f"{int(df_clean['Liveborn'].sum())} db", border=True)
+                sb_rate = df_clean['Stillborn'].sum() / df_clean['Totalborn'].sum() * 100
+                st.metric("Avg Stillborn Rate", f"{sb_rate:.1f}%", border=True)
+            with kpi5:
+                st.metric("Total Piglets (Live)", f"{int(df_clean['Liveborn'].sum())}", border=True)
 
             st.markdown("---")
             
             # --- TABOK ---
-            tab1_name = "🔍 Heti Mélyelemzés" if unique_weeks == 1 else "📈 Heti Trendek"
-            tab1, tab2, tab3 = st.tabs([tab1_name, "📊 Termelési Görbe", "🧬 Fajta Elemzés"])
+            tab1_name = "🔍 Weekly Deep Dive" if unique_weeks == 1 else "📈 Weekly Trends"
+            tab1, tab2, tab3 = st.tabs([tab1_name, "📊 Production Curve", "🧬 Breed Analysis"])
             
             with tab1:
                 if unique_weeks > 1:
-                    # --- TÖBB HÉT (TREND) ---
+                    # --- TREND ---
                     def calc(x):
                         sows = x[~x['Is_Gilt']]
                         gilts = x[x['Is_Gilt']]
@@ -186,48 +194,38 @@ if uploaded_files:
                     x_pos = range(len(weekly))
 
                     # 1. Grafikon: Élveszületés
-                    ax1.plot(x_pos, weekly['L_Sow'], 'go-', label='Koca')
-                    ax1.plot(x_pos, weekly['L_Gilt'], 's-', color='orange', label='Süldő')
+                    ax1.plot(x_pos, weekly['L_Sow'], 'go-', label='Sow (2+)')
+                    ax1.plot(x_pos, weekly['L_Gilt'], 's-', color='orange', label='Gilt (1)')
                     force_text_with_counts(ax1, x_pos, weekly['L_Sow'], weekly['C_Sow'], 'green', position='top')
                     force_text_with_counts(ax1, x_pos, weekly['L_Gilt'], weekly['C_Gilt'], 'darkorange', position='bottom')
                     ax1.set_ylim(0, max(weekly['L_Sow'].max(), weekly['L_Gilt'].max()) * 1.4)
                     ax1.set_xticks(x_pos); ax1.set_xticklabels(x_lbl); ax1.legend(loc='upper left'); ax1.grid(True, alpha=0.3)
-                    ax1.set_title("Heti Élveszületés Trend", fontsize=11)
+                    ax1.set_title("Weekly Liveborn Trend", fontsize=11)
 
-                    # 2. Grafikon: Veszteség
-                    ax2.bar(x_pos, weekly['S_Sow'], color='darkred', alpha=0.6, label='Koca %')
-                    ax2.bar(x_pos, weekly['S_Gilt'], color='orange', alpha=0.6, label='Süldő %', bottom=weekly['S_Sow'])
+                    # 2. Grafikon: Veszteség (%)
+                    ax2.bar(x_pos, weekly['S_Sow'], color='darkred', alpha=0.6, label='Sow Loss %')
+                    ax2.bar(x_pos, weekly['S_Gilt'], color='orange', alpha=0.6, label='Gilt Loss %', bottom=weekly['S_Sow'])
                     y_max_loss = (weekly['S_Sow'] + weekly['S_Gilt']).max()
                     ax2.set_ylim(0, y_max_loss * 1.3)
-                    ax2.set_xticks(x_pos); ax2.set_xticklabels(x_lbl); ax2.legend(); ax2.set_title("Veszteség Trend (%)", fontsize=11)
+                    ax2.set_xticks(x_pos); ax2.set_xticklabels(x_lbl); ax2.legend(); ax2.set_title("Loss Trend (%)", fontsize=11)
                     
                     st.pyplot(fig, use_container_width=True)
-                    
-                    # LETÖLTÉS GOMB
-                    st.download_button(
-                        label="📥 Trend Grafikon Letöltése (PNG)",
-                        data=download_chart(fig, "heti_trend.png"),
-                        file_name="heti_trend.png",
-                        mime="image/png"
-                    )
+                    st.download_button("📥 Download Chart (PNG)", download_chart(fig, "weekly_trend.png"), "weekly_trend.png", "image/png")
 
                 else:
-                    # --- EGY HÉT (MÉLYELEMZÉS) ---
-                    st.info(f"Részletes elemzés: {df_clean['Week'].iloc[0]}. hét")
+                    # --- MÉLYELEMZÉS (1 hét) ---
+                    st.info(f"Detailed Analysis for Week {df_clean['Week'].iloc[0]}")
                     
-                    sows = df_clean[~df_clean['Is_Gilt']]
-                    gilts = df_clean[df_clean['Is_Gilt']]
-                    
-                    # Összesítő Bar Chart
-                    categories = ['Koca (2+)', 'Süldő (1)']
-                    live_vals = [sows['Liveborn'].mean() if not sows.empty else 0, gilts['Liveborn'].mean() if not gilts.empty else 0]
-                    still_vals = [sows['Stillborn'].mean() if not sows.empty else 0, gilts['Stillborn'].mean() if not gilts.empty else 0]
+                    # Összesítő Stacked Bar
+                    categories = ['Sow (2+)', 'Gilt (1)']
+                    live_vals = [sows_data['Liveborn'].mean() if not sows_data.empty else 0, gilts_data['Liveborn'].mean() if not gilts_data.empty else 0]
+                    still_vals = [sows_data['Stillborn'].mean() if not sows_data.empty else 0, gilts_data['Stillborn'].mean() if not gilts_data.empty else 0]
                     total_vals = [l + s for l, s in zip(live_vals, still_vals)]
-                    counts = [len(sows), len(gilts)]
+                    counts = [len(sows_data), len(gilts_data)]
                     
                     fig_main, ax_main = plt.subplots(figsize=(8, 6))
-                    p1 = ax_main.bar(categories, live_vals, color='green', label='Élve', width=0.5)
-                    p2 = ax_main.bar(categories, still_vals, bottom=live_vals, color='salmon', label='Halva', width=0.5)
+                    p1 = ax_main.bar(categories, live_vals, color='green', label='Live', width=0.5)
+                    p2 = ax_main.bar(categories, still_vals, bottom=live_vals, color='salmon', label='Still', width=0.5)
                     
                     ax_main.bar_label(p1, label_type='center', color='white', fontweight='bold', fmt='%.1f')
                     for rect in p2:
@@ -242,20 +240,14 @@ if uploaded_files:
                                         ha='center', va='bottom', fontweight='bold', fontsize=10)
                     
                     ax_main.set_ylim(0, max(total_vals) * 1.35 if total_vals else 10)
-                    ax_main.set_title("Eredmények: Élve + Halva = Összes született", fontsize=12)
+                    ax_main.set_title("Results: Live + Still = Total Born", fontsize=12)
                     ax_main.legend(loc='upper right')
                     
                     st.pyplot(fig_main, use_container_width=True)
-                    st.download_button(
-                        label="📥 Összesítő Grafikon Letöltése",
-                        data=download_chart(fig_main, "koca_suldo_osszesito.png"),
-                        file_name="koca_suldo_osszesito.png",
-                        mime="image/png"
-                    )
+                    st.download_button("📥 Download Summary Chart", download_chart(fig_main, "summary_chart.png"), "summary_chart.png", "image/png")
                     
                     st.divider()
 
-                    # Kis grafikonok
                     col1, col2 = st.columns(2)
                     
                     def plot_top_performance(data, group_col, title, ax):
@@ -270,54 +262,58 @@ if uploaded_files:
                             ax.set_xlim(0, stats['Liveborn'].max() * 1.35) 
                             ax.set_title(title, fontsize=11)
                         else:
-                            ax.text(0.5, 0.5, "Nincs elég adat", ha='center')
+                            ax.text(0.5, 0.5, "Not enough data", ha='center')
                             ax.set_title(title)
 
                     with col1:
                         if 'Inseminator' in df_clean.columns:
                             fig_ins, ax_ins = plt.subplots(figsize=(6, 6))
-                            plot_top_performance(df_clean, 'Inseminator', "🏆 Inszeminátor Toplista", ax_ins)
+                            plot_top_performance(df_clean, 'Inseminator', "🏆 Inseminator Ranking (Avg Live)", ax_ins)
                             st.pyplot(fig_ins, use_container_width=True)
-                            st.download_button("📥 Inszeminátor Chart Letöltése", download_chart(fig_ins, "inszeminatorok.png"), "inszeminatorok.png")
+                            st.download_button("📥 Download Inseminator Chart", download_chart(fig_ins, "inseminator_rank.png"), "inseminator_rank.png")
 
                     with col2:
                         if 'Semen' in df_clean.columns:
                             fig_sem, ax_sem = plt.subplots(figsize=(6, 6))
-                            plot_top_performance(df_clean, 'Semen', "🧬 Mag (Batch) Toplista", ax_sem)
+                            plot_top_performance(df_clean, 'Semen', "🧬 Semen Batch Ranking (Avg Live)", ax_sem)
                             st.pyplot(fig_sem, use_container_width=True)
-                            st.download_button("📥 Mag Chart Letöltése", download_chart(fig_sem, "mag_batch.png"), "mag_batch.png")
+                            st.download_button("📥 Download Semen Chart", download_chart(fig_sem, "semen_rank.png"), "semen_rank.png")
 
             with tab2:
-                # --- GÖRBE ---
+                # --- GÖRBE (ANGOL - ÚJ: DARABSZÁM A %)
                 df_clean['P_Group'] = df_clean['Parity'].apply(lambda x: x if x < 8 else 8)
                 stat = df_clean.groupby('P_Group').agg({'Liveborn':'mean', 'Stillborn':'sum', 'Totalborn':'sum', 'Parity':'count'}).reset_index()
-                stat['SB_Rate'] = stat['Stillborn'] / stat['Totalborn'] * 100
+                
+                # ÚJ SZÁMÍTÁS: Átlagos darabszám (Total Stillborn / Esetek száma)
+                stat['Avg_SB_Count'] = stat['Stillborn'] / stat['Parity']
                 
                 fig2, ax = plt.subplots(figsize=(9, 6))
+                
+                # Zöld vonal (Élve)
                 ax.plot(stat['P_Group'], stat['Liveborn'], 'go-', lw=2)
                 force_text_with_counts(ax, stat['P_Group'], stat['Liveborn'], stat['Parity'], 'green', position='top')
                 
                 ax.set_ylim(0, stat['Liveborn'].max() * 1.3)
                 ax.set_xticks(stat['P_Group'])
                 ax.set_xticklabels([f"{int(p)}\n({c})" for p, c in zip(stat['P_Group'], stat['Parity'])])
-                ax.set_title("Termelési Görbe", fontsize=11); ax.grid(True, alpha=0.3)
-                
+                ax.set_title("Production Curve (by Parity)", fontsize=11); ax.grid(True, alpha=0.3)
+                ax.set_ylabel("Liveborn (count)", color='green')
+
+                # Piros oszlopok (MOST MÁR DARABSZÁM, NEM %)
                 axr = ax.twinx()
-                bars = axr.bar(stat['P_Group'], stat['SB_Rate'], color='red', alpha=0.2)
-                force_text_on_bars(axr, bars, is_percent=True, color='darkred')
-                axr.set_ylim(0, stat['SB_Rate'].max() * 1.4)
-                axr.set_ylabel("Veszteség %", color='red')
+                bars = axr.bar(stat['P_Group'], stat['Avg_SB_Count'], color='red', alpha=0.2)
+                
+                # Címkék (nem százalékos!)
+                force_text_on_bars(axr, bars, is_percent=False, color='darkred')
+                
+                axr.set_ylim(0, stat['Avg_SB_Count'].max() * 1.5) # Bő ráhagyás
+                axr.set_ylabel("Avg Stillborn (count)", color='red')
                 
                 st.pyplot(fig2, use_container_width=True)
-                st.download_button(
-                    label="📥 Termelési Görbe Letöltése",
-                    data=download_chart(fig2, "termelesi_gorbe.png"),
-                    file_name="termelesi_gorbe.png",
-                    mime="image/png"
-                )
+                st.download_button("📥 Download Curve Chart", download_chart(fig2, "production_curve.png"), "production_curve.png", "image/png")
             
             with tab3:
-                # --- FAJTA ---
+                # --- FAJTA (ANGOL) ---
                 if 'Breed' in df_clean.columns:
                     b_stat = df_clean.groupby('Breed').agg({'Liveborn':'mean', 'Stillborn':'mean', 'Parity':'count'}).reset_index()
                     b_stat = b_stat[b_stat['Parity'] >= 5].sort_values('Liveborn')
@@ -326,8 +322,8 @@ if uploaded_files:
                         b_stat['Total_Avg'] = b_stat['Liveborn'] + b_stat['Stillborn']
                         fig3, ax3 = plt.subplots(figsize=(8, len(b_stat)*0.8 + 1))
                         
-                        p1 = ax3.barh(b_stat['Breed'], b_stat['Liveborn'], color='teal', label='Élve')
-                        p2 = ax3.barh(b_stat['Breed'], b_stat['Stillborn'], left=b_stat['Liveborn'], color='salmon', label='Halva')
+                        p1 = ax3.barh(b_stat['Breed'], b_stat['Liveborn'], color='teal', label='Live')
+                        p2 = ax3.barh(b_stat['Breed'], b_stat['Stillborn'], left=b_stat['Liveborn'], color='salmon', label='Still')
                         
                         ax3.bar_label(p1, label_type='center', color='white', fontweight='bold', fmt='%.1f')
                         ax3.bar_label(p2, label_type='center', color='black', fontsize=9, fmt='%.1f')
@@ -337,19 +333,14 @@ if uploaded_files:
                              ax3.text(row['Total_Avg'] + 0.2, i, text, va='center', color='black', fontsize=9, fontweight='bold')
 
                         ax3.set_xlim(0, b_stat['Total_Avg'].max() * 1.35)
-                        ax3.set_title("Fajták Teljesítménye", fontsize=11); ax3.legend(loc='lower right', fontsize=9)
+                        ax3.set_title("Breed Performance", fontsize=11); ax3.legend(loc='lower right', fontsize=9)
                         
                         st.pyplot(fig3, use_container_width=True)
-                        st.download_button(
-                            label="📥 Fajta Elemzés Letöltése",
-                            data=download_chart(fig3, "fajta_elemzes.png"),
-                            file_name="fajta_elemzes.png",
-                            mime="image/png"
-                        )
+                        st.download_button("📥 Download Breed Chart", download_chart(fig3, "breed_analysis.png"), "breed_analysis.png", "image/png")
                     else:
-                        st.warning("Nincs elég adat (min. 5 fialás).")
+                        st.warning("Not enough data (min. 5 farrowings per breed).")
                 else:
-                    st.info("Nincs fajta adat.")
+                    st.info("No Breed data found.")
 
         else:
-            st.error("Hiányzó oszlopok.")
+            st.error("Missing columns in the file.")
