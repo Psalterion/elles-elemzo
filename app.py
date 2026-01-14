@@ -198,7 +198,19 @@ if uploaded_files:
                     ax1.plot(x_pos, weekly['L_Gilt'], 's-', color='orange', label='Gilt (1)')
                     force_text_with_counts(ax1, x_pos, weekly['L_Sow'], weekly['C_Sow'], 'green', position='top')
                     force_text_with_counts(ax1, x_pos, weekly['L_Gilt'], weekly['C_Gilt'], 'darkorange', position='bottom')
-                    ax1.set_ylim(0, max(weekly['L_Sow'].max(), weekly['L_Gilt'].max()) * 1.4)
+                    # --- JAVÍTÁS KEZDETE ---
+                    # 1. Kicseréljük a NaN (hiányzó) értékeket 0-ra a számítás idejére
+                    max_sow = weekly['L_Sow'].fillna(0).max()
+                    max_gilt = weekly['L_Gilt'].fillna(0).max()
+
+                    # 2. Kiszámoljuk a maximumot (ha mindkettő 0, akkor adunk egy alap 10-es magasságot, hogy ne legyen hiba)
+                    top_limit = max(max_sow, max_gilt)
+                    if top_limit == 0 or pd.isna(top_limit):
+                    top_limit = 10 # Alapértelmezett magasság, ha üres az adat
+
+                    # 3. Beállítjuk a limitet
+                    ax1.set_ylim(0, top_limit * 1.4)
+                    # --- JAVÍTÁS VÉGE ---
                     ax1.set_xticks(x_pos); ax1.set_xticklabels(x_lbl); ax1.legend(loc='upper left'); ax1.grid(True, alpha=0.3)
                     ax1.set_title("Weekly Liveborn Trend", fontsize=11)
 
@@ -344,3 +356,4 @@ if uploaded_files:
 
         else:
             st.error("Missing columns in the file.")
+
