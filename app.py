@@ -206,7 +206,7 @@ if uploaded_files:
                     # 2. Kiszámoljuk a maximumot (ha mindkettő 0, akkor adunk egy alap 10-es magasságot, hogy ne legyen hiba)
                     top_limit = max(max_sow, max_gilt)
                     if top_limit == 0 or pd.isna(top_limit):
-                    top_limit = 10 # Alapértelmezett magasság, ha üres az adat
+                        top_limit = 10 # Alapértelmezett magasság, ha üres az adat
 
                     # 3. Beállítjuk a limitet
                     ax1.set_ylim(0, top_limit * 1.4)
@@ -356,4 +356,5 @@ if uploaded_files:
 
         else:
             st.error("Missing columns in the file.")
+
 
