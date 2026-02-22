@@ -179,12 +179,10 @@ if uploaded_files:
                     ax1.plot(x_pos, ins_stat['L_Sow'], 'go--', label='Sow (2+)', lw=2)
                     ax1.plot(x_pos, ins_stat['L_Gilt'], 's--', color='orange', label='Gilt (1)', lw=2)
                     
-                    # SZŰKÍTETT Y-TENGELY (Dinamikus minimum és maximum keresés)
                     min_val = ins_stat[['L_Total', 'L_Sow', 'L_Gilt']].min().min()
                     max_val = ins_stat[['L_Total', 'L_Sow', 'L_Gilt']].max().max()
                     ax1.set_ylim(min_val - 2.5, max_val + 3.0)
                     
-                    # ÖSSZES PONT ADATAI
                     force_text_with_counts(ax1, x_pos, ins_stat['L_Total'], ins_stat['C_Total'], 'blue', position='top')
                     force_text_with_counts(ax1, x_pos, ins_stat['L_Sow'], ins_stat['C_Sow'], 'green', position='top')
                     force_text_with_counts(ax1, x_pos, ins_stat['L_Gilt'], ins_stat['C_Gilt'], 'darkorange', position='bottom')
@@ -332,7 +330,32 @@ if uploaded_files:
                         
                         st.pyplot(fig6, use_container_width=True)
                         figs_to_export.append(fig6)
+
+            st.markdown("---")
+
+            # ROW 4 (Új sor a mag elemzésnek)
+            col_g, col_h = st.columns(2)
+
+            with col_g:
+                if 'Semen' in df_clean.columns:
+                    sem_stats = df_clean.groupby('Semen').agg({'Liveborn':'mean', 'Parity':'count'}).reset_index()
+                    sem_stats = sem_stats[sem_stats['Parity'] >= 3].sort_values('Liveborn', ascending=True).tail(8)
+                    
+                    if not sem_stats.empty:
+                        fig7, ax7 = plt.subplots(figsize=(10, 6))
+                        bars = ax7.barh(sem_stats['Semen'].astype(str), sem_stats['Liveborn'], color='royalblue')
+                        for i, (idx, row) in enumerate(sem_stats.iterrows()):
+                            ax7.text(row['Liveborn'], i, f" {row['Liveborn']:.1f} ({int(row['Parity'])})", 
+                                   va='center', fontweight='bold', fontsize=12)
                         
+                        ax7.set_xlim(0, sem_stats['Liveborn'].max() * 1.35)
+                        ax7.set_title("Top 8 Semen Batches (Avg Live)", fontsize=14, fontweight='bold')
+                        
+                        st.pyplot(fig7, use_container_width=True)
+                        figs_to_export.append(fig7)
+            
+            # A col_h jelenleg üres marad, ami a 2 oszlopos elrendezés miatt teljesen rendben van.
+
             st.markdown("---")
             
             if figs_to_export:
