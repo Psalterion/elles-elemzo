@@ -2,20 +2,18 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import io
+from matplotlib.backends.backend_pdf import PdfPages
 import warnings
 
-# --- ALAP BEÁLLÍTÁSOK ---
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="Nagy Dűr Farrowing Analyzer", layout="wide", initial_sidebar_state="collapsed")
 
-# --- STÍLUS (CSS - Nyomtatásra és nagyképernyőre optimalizálva) ---
 st.markdown("""
 <style>
-    .stDownloadButton > button { background-color: #f0f2f6; color: #31333F; border: 1px solid #d6d6d8; width: 100%; }
-    .stDownloadButton > button:hover { border-color: #ff4b4b; color: #ff4b4b; }
+    .stDownloadButton > button { background-color: #0066cc; color: white; border: none; width: 100%; font-size: 18px; font-weight: bold; padding: 10px;}
+    .stDownloadButton > button:hover { background-color: #004c99; color: white; }
     [data-testid="stMetricValue"] { font-size: 28px; color: #0066cc; font-weight: bold; }
     [data-testid="stMetricLabel"] { font-size: 16px; font-weight: bold; }
-    /* Grafikonok közti térköz beállítása */
     .block-container { padding-top: 1rem; padding-bottom: 1rem; }
     h1 { font-size: 36px; text-align: center; }
 </style>
@@ -24,7 +22,6 @@ st.markdown("""
 st.title("🐖 Nagy Dűr Farrowing Analyzer")
 st.markdown("---")
 
-# --- FÜGGVÉNYEK ---
 def load_data(file):
     try:
         if file.name.endswith('.csv'):
@@ -45,7 +42,6 @@ def load_data(file):
         if date_col:
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             df['Farrow_Week'] = df[date_col].dt.isocalendar().week
-            # Napok magyarul a napi bontáshoz
             days_hu = {0: 'Hétfő', 1: 'Kedd', 2: 'Szerda', 3: 'Csütörtök', 4: 'Péntek', 5: 'Szombat', 6: 'Vasárnap'}
             df['Day_Name'] = df[date_col].dt.dayofweek.map(days_hu)
             df['Day_Num'] = df[date_col].dt.dayofweek
@@ -54,7 +50,6 @@ def load_data(file):
             if week_col:
                 df['Farrow_Week'] = df[week_col]
 
-        # Szótár kiterjesztve a Group (Inszeminálás hete) oszloppal
         mapping = {
             'Sow name': ['Sow name', 'Koca', 'Anya', 'Sow'],
             'Parity': ['Parity', 'Fialás', 'Ellés', 'Sorszám'],
@@ -77,7 +72,6 @@ def load_data(file):
         
         df = df.rename(columns=new_cols)
         
-        # Ha nincs Ins_Week, kiszámoljuk visszamenőleg 115 nappal
         if 'Ins_Week' not in df.columns and date_col:
             df['Ins_Week'] = (df[date_col] - pd.Timedelta(days=115)).dt.isocalendar().week
             
@@ -86,13 +80,15 @@ def load_data(file):
     except Exception as e:
         return None
 
-def download_chart(fig, filename):
+def export_to_pdf(figs):
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches='tight', dpi=150)
+    with PdfPages(buf) as pdf:
+        for fig in figs:
+            fig.set_size_inches(11.69, 8.27)
+            pdf.savefig(fig, orientation='landscape', bbox_inches='tight')
     buf.seek(0)
     return buf
 
-# Címkéző (nagy méretű nyomtatáshoz)
 def force_text_on_bars(ax, bars, is_percent=False, color='black'):
     for bar in bars:
         height = bar.get_height()
@@ -156,12 +152,12 @@ if uploaded_files:
             
             st.markdown("---")
             
-            # --- DASHBOARD ELRENDEZÉS (Fülek nélkül, 2 oszlopban) ---
+            figs_to_export = []
+
             # ROW 1
             col_a, col_b = st.columns(2)
             
             with col_a:
-                # 1. INSZEMINÁLÁSI HÉT SZERINTI BONTÁS
                 if 'Ins_Week' in df_clean.columns:
                     def calc_ins(x):
                         sows = x[~x['Is_Gilt']]
@@ -173,9 +169,7 @@ if uploaded_files:
                             'C_Sow': len(sows), 'C_Gilt': len(gilts)
                         })
                     
-                    ins_stat = df_clean.groupby('Ins_Week').apply(calc_ins).reset_index()
-                    # Rendezzük, ha esetleg több év is van
-                    ins_stat = ins_stat.sort_values('Ins_Week')
+                    ins_stat = df_clean.groupby('Ins_Week').apply(calc_ins).reset_index().sort_values('Ins_Week')
                     
                     fig1, ax1 = plt.subplots(figsize=(10, 6))
                     x_lbl = ins_stat['Ins_Week'].astype(int).astype(str)
@@ -185,21 +179,26 @@ if uploaded_files:
                     ax1.plot(x_pos, ins_stat['L_Sow'], 'go--', label='Sow (2+)', lw=2)
                     ax1.plot(x_pos, ins_stat['L_Gilt'], 's--', color='orange', label='Gilt (1)', lw=2)
                     
-                    force_text_with_counts(ax1, x_pos, ins_stat['L_Total'], ins_stat['C_Total'], 'blue', position='top')
+                    # SZŰKÍTETT Y-TENGELY (Dinamikus minimum és maximum keresés)
+                    min_val = ins_stat[['L_Total', 'L_Sow', 'L_Gilt']].min().min()
+                    max_val = ins_stat[['L_Total', 'L_Sow', 'L_Gilt']].max().max()
+                    ax1.set_ylim(min_val - 2.5, max_val + 3.0)
                     
-                    ax1.set_ylim(0, ins_stat['L_Total'].max() * 1.5)
+                    # ÖSSZES PONT ADATAI
+                    force_text_with_counts(ax1, x_pos, ins_stat['L_Total'], ins_stat['C_Total'], 'blue', position='top')
+                    force_text_with_counts(ax1, x_pos, ins_stat['L_Sow'], ins_stat['C_Sow'], 'green', position='top')
+                    force_text_with_counts(ax1, x_pos, ins_stat['L_Gilt'], ins_stat['C_Gilt'], 'darkorange', position='bottom')
+                    
                     ax1.set_xticks(x_pos); ax1.set_xticklabels([f"Wk {w}" for w in x_lbl], fontsize=11)
                     ax1.set_title("Performance by Insemination Week (Avg Live)", fontsize=14, fontweight='bold')
                     ax1.legend(loc='lower right', fontsize=11); ax1.grid(True, alpha=0.3)
                     
                     st.pyplot(fig1, use_container_width=True)
+                    figs_to_export.append(fig1)
 
             with col_b:
-                # 2. NAPI BONTÁS (Farrowings by Day)
                 if 'Day_Num' in df_clean.columns:
                     day_stat = df_clean.groupby(['Day_Num', 'Day_Name']).size().reset_index(name='Count')
-                    
-                    # Biztosítjuk, hogy minden nap ott legyen
                     all_days = pd.DataFrame({'Day_Num': range(7), 'Day_Name': ['Hétfő', 'Kedd', 'Szerda', 'Csütörtök', 'Péntek', 'Szombat', 'Vasárnap']})
                     day_stat = pd.merge(all_days, day_stat, on=['Day_Num', 'Day_Name'], how='left').fillna(0)
                     
@@ -213,9 +212,11 @@ if uploaded_files:
                                      f"{int(height)}", ha='center', va='bottom', fontweight='bold', fontsize=14)
                     
                     ax2.set_ylim(0, day_stat['Count'].max() * 1.3)
-                    ax2.set_title("Farrowings by Day of the Week (Kocák fialása naponta)", fontsize=14, fontweight='bold')
+                    ax2.set_title("Farrowings by Day of the Week", fontsize=14, fontweight='bold')
                     ax2.grid(axis='y', alpha=0.3)
+                    
                     st.pyplot(fig2, use_container_width=True)
+                    figs_to_export.append(fig2)
 
             st.markdown("---")
             
@@ -223,16 +224,23 @@ if uploaded_files:
             col_c, col_d = st.columns(2)
             
             with col_c:
-                # 3. KOCA VS SÜLDŐ ÖSSZESÍTŐ (Stacked)
-                categories = ['Sow (2+)', 'Gilt (1)']
-                live_vals = [sows_data['Liveborn'].mean() if not sows_data.empty else 0, gilts_data['Liveborn'].mean() if not gilts_data.empty else 0]
-                still_vals = [sows_data['Stillborn'].mean() if not sows_data.empty else 0, gilts_data['Stillborn'].mean() if not gilts_data.empty else 0]
+                categories = ['Sow (2+)', 'Gilt (1)', 'Overall (All)']
+                live_vals = [
+                    sows_data['Liveborn'].mean() if not sows_data.empty else 0, 
+                    gilts_data['Liveborn'].mean() if not gilts_data.empty else 0,
+                    df_clean['Liveborn'].mean() if not df_clean.empty else 0
+                ]
+                still_vals = [
+                    sows_data['Stillborn'].mean() if not sows_data.empty else 0, 
+                    gilts_data['Stillborn'].mean() if not gilts_data.empty else 0,
+                    df_clean['Stillborn'].mean() if not df_clean.empty else 0
+                ]
                 total_vals = [l + s for l, s in zip(live_vals, still_vals)]
-                counts = [len(sows_data), len(gilts_data)]
+                counts = [len(sows_data), len(gilts_data), len(df_clean)]
                 
                 fig3, ax3 = plt.subplots(figsize=(10, 6))
-                p1 = ax3.bar(categories, live_vals, color='green', label='Live', width=0.5)
-                p2 = ax3.bar(categories, still_vals, bottom=live_vals, color='salmon', label='Still', width=0.5)
+                p1 = ax3.bar(categories, live_vals, color='green', label='Live', width=0.6)
+                p2 = ax3.bar(categories, still_vals, bottom=live_vals, color='salmon', label='Still', width=0.6)
                 
                 ax3.bar_label(p1, label_type='center', color='white', fontweight='bold', fmt='%.1f', fontsize=14)
                 for rect in p2:
@@ -247,12 +255,13 @@ if uploaded_files:
                                  ha='center', va='bottom', fontweight='bold', fontsize=14)
                 
                 ax3.set_ylim(0, max(total_vals) * 1.35 if total_vals else 10)
-                ax3.set_title("Sow vs Gilt Overall Average (Live + Still)", fontsize=14, fontweight='bold')
+                ax3.set_title("Performance Breakdown (Live + Still)", fontsize=14, fontweight='bold')
                 ax3.legend(loc='upper right', fontsize=11)
+                
                 st.pyplot(fig3, use_container_width=True)
+                figs_to_export.append(fig3)
 
             with col_d:
-                # 4. TERMELÉSI GÖRBE (Parity)
                 df_clean['P_Group'] = df_clean['Parity'].apply(lambda x: x if x < 8 else 8)
                 stat = df_clean.groupby('P_Group').agg({'Liveborn':'mean', 'Stillborn':'sum', 'Totalborn':'sum', 'Parity':'count'}).reset_index()
                 stat['Avg_SB_Count'] = stat['Stillborn'] / stat['Parity']
@@ -273,6 +282,7 @@ if uploaded_files:
                 axr.set_ylim(0, stat['Avg_SB_Count'].max() * 1.5)
                 
                 st.pyplot(fig4, use_container_width=True)
+                figs_to_export.append(fig4)
 
             st.markdown("---")
             
@@ -280,7 +290,6 @@ if uploaded_files:
             col_e, col_f = st.columns(2)
             
             with col_e:
-                # 5. FAJTA
                 if 'Breed' in df_clean.columns:
                     b_stat = df_clean.groupby('Breed').agg({'Liveborn':'mean', 'Stillborn':'mean', 'Parity':'count'}).reset_index()
                     b_stat = b_stat[b_stat['Parity'] >= 5].sort_values('Liveborn')
@@ -302,10 +311,11 @@ if uploaded_files:
                         ax5.set_xlim(0, b_stat['Total_Avg'].max() * 1.35)
                         ax5.set_title("Breed Performance", fontsize=14, fontweight='bold')
                         ax5.legend(loc='lower right', fontsize=11)
+                        
                         st.pyplot(fig5, use_container_width=True)
+                        figs_to_export.append(fig5)
 
             with col_f:
-                # 6. INSZEMINÁTOR TOPLISTA
                 if 'Inseminator' in df_clean.columns:
                     ins_stats = df_clean.groupby('Inseminator').agg({'Liveborn':'mean', 'Parity':'count'}).reset_index()
                     ins_stats = ins_stats[ins_stats['Parity'] >= 3].sort_values('Liveborn', ascending=True).tail(8)
@@ -319,7 +329,20 @@ if uploaded_files:
                         
                         ax6.set_xlim(0, ins_stats['Liveborn'].max() * 1.35)
                         ax6.set_title("Top 8 Inseminators (Avg Live)", fontsize=14, fontweight='bold')
+                        
                         st.pyplot(fig6, use_container_width=True)
+                        figs_to_export.append(fig6)
+                        
+            st.markdown("---")
+            
+            if figs_to_export:
+                pdf_buffer = export_to_pdf(figs_to_export)
+                st.download_button(
+                    label="📄 Download Full PDF Report (A4 Landscape)",
+                    data=pdf_buffer,
+                    file_name="Farrowing_Report.pdf",
+                    mime="application/pdf"
+                )
                         
         else:
             st.error("Missing columns.")
